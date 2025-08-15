@@ -1,0 +1,198 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <title>Погода в Киеве</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        :root {
+            color-scheme: light dark;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            margin: 24px;
+        }
+
+        .wrap {
+            max-width: 980px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            margin: 0 0 8px;
+        }
+
+        .muted {
+            opacity: .75;
+            margin-bottom: 16px;
+        }
+
+        .card {
+            border: 1px solid rgba(127,127,127,.25);
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 16px;
+        }
+
+        th, td {
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(127,127,127,.25);
+            text-align: left;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+
+        @media (min-width: 900px) {
+            .grid {
+                grid-template-columns: 2fr 1fr;
+            }
+        }
+
+        .err {
+            color: #c00;
+            margin-top: 12px;
+            white-space: pre-wrap;
+        }
+
+        /* --- фиксы для графика --- */
+        .chart-box {
+            position: relative;
+            height: 420px;
+        }
+        /* фиксируем высоту области графика */
+        #weatherChart {
+            display: block;
+            width: 100% !important;
+            height: 100% !important;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="wrap">
+        <h1>Погода в Киеве</h1>
+        <div class="muted">Источник: Open-Meteo. Почасовой график и сводка на 7 дней.</div>
+
+        <div class="grid">
+            <div class="card">
+                <h3 style="margin-top:0">Почасовой график</h3>
+                <div class="muted">Температура (°C) и вероятность осадков (%) на ближайшие ~48 часов</div>
+                <div class="chart-box">
+                    <canvas id="weatherChart"></canvas>
+                </div>
+                <div id="chartError" class="err" hidden></div>
+            </div>
+
+            <div class="card">
+                <h3 style="margin-top:0">Сводка на 7 дней</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Дата</th>
+                            <th>Мин / Макс (°C)</th>
+                            <th>Осадки (мм)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dailyBody">
+                        <tr><td colspan="3" class="muted">Загрузка…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function loadForecast() {
+            const chartError = document.getElementById('chartError');
+            const dailyBody = document.getElementById('dailyBody');
+            try {
+                const res = await fetch('/api/forecast');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+
+                // --- Почасовые данные ---
+                const hours = data?.hourly?.time ?? [];
+                const temps = data?.hourly?.temperature_2m ?? [];
+                const precipProb = data?.hourly?.precipitation_probability ?? [];
+                const len = Math.min(48, hours.length, temps.length, precipProb.length);
+                const labels = [], tData = [], pData = [];
+                for (let i = 0; i < len; i++) {
+                    const d = new Date(hours[i]);
+                    labels.push(d.toLocaleString('uk-UA', { weekday: 'short', hour: '2-digit', minute: '2-digit' }));
+                    tData.push(temps[i]);
+                    pData.push(precipProb[i] ?? 0);
+                }
+
+                // --- Безопасное создание графика ---
+                const canvas = document.getElementById('weatherChart');
+                const prev = Chart.getChart(canvas);    // если уже есть — уничтожаем
+                if (prev) prev.destroy();
+
+                // синхронизируем внутреннюю высоту канваса с контейнером
+                const boxH = canvas.parentElement.clientHeight;
+                if (boxH > 0) canvas.height = boxH;
+
+                const chart = new Chart(canvas.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        labels,
+                        datasets: [
+                            { label: 'Температура, °C', data: tData, yAxisID: 'y', tension: 0.3, pointRadius: 0 },
+                            { label: 'Вероятность осадков, %', data: pData, yAxisID: 'y1', tension: 0.3, pointRadius: 0 }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,          // важно при фикс-высоте .chart-box
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            x: { ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 8 } },
+                            y: { position: 'left', title: { display: true, text: '°C' } },
+                            y1: { position: 'right', title: { display: true, text: '%' }, min: 0, max: 100, grid: { drawOnChartArea: false } }
+                        }
+                    }
+                });
+
+                // корректный ресайз при изменении окна
+                window.addEventListener('resize', () => chart.resize());
+
+                // --- Таблица 7 дней ---
+                const dTime = data?.daily?.time ?? [];
+                const tMin = data?.daily?.temperature_2m_min ?? [];
+                const tMax = data?.daily?.temperature_2m_max ?? [];
+                const pSum = data?.daily?.precipitation_sum ?? [];
+                dailyBody.innerHTML = dTime.length
+                    ? dTime.map((iso, i) => {
+                        const d = new Date(iso);
+                        const s = d.toLocaleDateString('uk-UA', { weekday: 'short', day: '2-digit', month: '2-digit' });
+                        return `<tr><td>${s}</td><td>${tMin[i] ?? '—'} / ${tMax[i] ?? '—'}</td><td>${pSum[i] ?? 0}</td></tr>`;
+                    }).join('')
+                    : `<tr><td colspan="3" class="muted">Нет данных по дням</td></tr>`;
+
+                chartError.hidden = true;
+                chartError.textContent = '';
+            } catch (e) {
+                const msg = (e && e.message) ? e.message : String(e);
+                chartError.hidden = false;
+                chartError.textContent = msg;
+            }
+        }
+
+        // Запускаем загрузку (предохранитель на случай hot reload)
+        if (!window.__loadedWeatherOnce) {
+            window.__loadedWeatherOnce = true;
+            loadForecast();
+        }
+    </script>
+</body>
+</html>
