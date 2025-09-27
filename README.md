@@ -6,7 +6,7 @@
 Для доступу ззовні використовується **ngrok**, який створює публічний HTTPS-URL до локального сервера.
 
 
-## Перенесення на справжню базу даних (SQLite або іншу)
+## Перенесення на справжню базу даних 
 // було:
 builder.Services.AddDbContext<AppDb>(o => o.UseInMemoryDatabase("weatherdb"));
 
