@@ -1,8 +1,8 @@
 ﻿<!doctype html>
-<html lang="ru">
+<html lang="uk">
 <head>
     <meta charset="utf-8" />
-    <title>Погода в Киеве</title>
+    <title>Погода в Києві (з "БД")</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
         :root {
@@ -64,55 +64,98 @@
             white-space: pre-wrap;
         }
 
-        /* --- фиксы для графика --- */
+        
         .chart-box {
             position: relative;
             height: 420px;
         }
-        /* фиксируем высоту области графика */
+
         #weatherChart {
             display: block;
             width: 100% !important;
             height: 100% !important;
+        }
+
+       
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr auto;
+            gap: 8px;
+            align-items: end;
+        }
+
+        input[type="datetime-local"], input[type="number"] {
+            width: 100%;
+            padding: 8px;
+        }
+
+        button {
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid rgba(127,127,127,.35);
+            cursor: pointer;
+        }
+
+        .small {
+            font-size: 12px;
+            opacity: .75;
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="wrap">
-        <h1>Погода в Киеве</h1>
-        <div class="muted">Источник: Open-Meteo. Почасовой график и сводка на 7 дней.</div>
+        <h1>Погода в Києві (дані з "БД")</h1>
+        <div class="muted">Бекенд читає з InMemory-БД; при першому запуску дані підтягуються з Open-Meteo та зберігаються у "БД".</div>
 
         <div class="grid">
             <div class="card">
-                <h3 style="margin-top:0">Почасовой график</h3>
-                <div class="muted">Температура (°C) и вероятность осадков (%) на ближайшие ~48 часов</div>
-                <div class="chart-box">
-                    <canvas id="weatherChart"></canvas>
-                </div>
+                <h3 style="margin-top:0">Погодинний графік</h3>
+                <div class="muted">Температура (°C) та ймовірність опадів (%) — з "БД"</div>
+                <div class="chart-box"><canvas id="weatherChart"></canvas></div>
                 <div id="chartError" class="err" hidden></div>
             </div>
 
             <div class="card">
-                <h3 style="margin-top:0">Сводка на 7 дней</h3>
+                <h3 style="margin-top:0">Зведення на 7 днів</h3>
                 <table>
-                    <thead>
-                        <tr>
-                            <th>Дата</th>
-                            <th>Мин / Макс (°C)</th>
-                            <th>Осадки (мм)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="dailyBody">
-                        <tr><td colspan="3" class="muted">Загрузка…</td></tr>
-                    </tbody>
+                    <thead><tr><th>Дата</th><th>Мін / Макс (°C)</th><th>Опади (мм)</th></tr></thead>
+                    <tbody id="dailyBody"><tr><td colspan="3" class="muted">Завантаження…</td></tr></tbody>
                 </table>
             </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <h3 style="margin-top:0">Адмінка: додати запис у "БД" (локально)</h3>
+            <div class="small">Час можна вказувати локальний — бекенд конвертує у UTC.</div>
+            <div class="form-row" style="margin-top:8px">
+                <div>
+                    <label>Час</label>
+                    <input id="fTime" type="datetime-local" />
+                </div>
+                <div>
+                    <label>Температура, °C</label>
+                    <input id="fTemp" type="number" step="0.1" />
+                </div>
+                <div>
+                    <label>Ймовірність опадів, %</label>
+                    <input id="fProb" type="number" min="0" max="100" />
+                </div>
+                <div><button id="btnAdd">Додати</button></div>
+            </div>
+            <div style="margin-top:8px">
+                <button id="btnReload">Оновити графік</button>
+                <button id="btnClear" title="Видалити всі записи з БД">Очистити БД</button>
+            </div>
+            <div id="adminMsg" class="muted" style="margin-top:8px"></div>
         </div>
     </div>
 
     <script>
-        async function loadForecast() {
+        let chart;
+
+       
+        async function loadFromDb() {
             const chartError = document.getElementById('chartError');
             const dailyBody = document.getElementById('dailyBody');
             try {
@@ -120,40 +163,38 @@
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
 
-                // --- Почасовые данные ---
+                
                 const hours = data?.hourly?.time ?? [];
                 const temps = data?.hourly?.temperature_2m ?? [];
-                const precipProb = data?.hourly?.precipitation_probability ?? [];
-                const len = Math.min(48, hours.length, temps.length, precipProb.length);
+                const probs = data?.hourly?.precipitation_probability ?? [];
+                const len = Math.min(48, hours.length, temps.length, probs.length);
                 const labels = [], tData = [], pData = [];
                 for (let i = 0; i < len; i++) {
                     const d = new Date(hours[i]);
                     labels.push(d.toLocaleString('uk-UA', { weekday: 'short', hour: '2-digit', minute: '2-digit' }));
                     tData.push(temps[i]);
-                    pData.push(precipProb[i] ?? 0);
+                    pData.push(probs[i] ?? 0);
                 }
 
-                // --- Безопасное создание графика ---
+                
                 const canvas = document.getElementById('weatherChart');
-                const prev = Chart.getChart(canvas);    // если уже есть — уничтожаем
+                const prev = Chart.getChart(canvas);
                 if (prev) prev.destroy();
-
-                // синхронизируем внутреннюю высоту канваса с контейнером
                 const boxH = canvas.parentElement.clientHeight;
                 if (boxH > 0) canvas.height = boxH;
 
-                const chart = new Chart(canvas.getContext('2d'), {
+                chart = new Chart(canvas.getContext('2d'), {
                     type: 'line',
                     data: {
                         labels,
                         datasets: [
                             { label: 'Температура, °C', data: tData, yAxisID: 'y', tension: 0.3, pointRadius: 0 },
-                            { label: 'Вероятность осадков, %', data: pData, yAxisID: 'y1', tension: 0.3, pointRadius: 0 }
+                            { label: 'Ймовірність опадів, %', data: pData, yAxisID: 'y1', tension: 0.3, pointRadius: 0 }
                         ]
                     },
                     options: {
                         responsive: true,
-                        maintainAspectRatio: false,          // важно при фикс-высоте .chart-box
+                        maintainAspectRatio: false,
                         interaction: { mode: 'index', intersect: false },
                         scales: {
                             x: { ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 8 } },
@@ -163,10 +204,7 @@
                     }
                 });
 
-                // корректный ресайз при изменении окна
-                window.addEventListener('resize', () => chart.resize());
-
-                // --- Таблица 7 дней ---
+                
                 const dTime = data?.daily?.time ?? [];
                 const tMin = data?.daily?.temperature_2m_min ?? [];
                 const tMax = data?.daily?.temperature_2m_max ?? [];
@@ -177,22 +215,53 @@
                         const s = d.toLocaleDateString('uk-UA', { weekday: 'short', day: '2-digit', month: '2-digit' });
                         return `<tr><td>${s}</td><td>${tMin[i] ?? '—'} / ${tMax[i] ?? '—'}</td><td>${pSum[i] ?? 0}</td></tr>`;
                     }).join('')
-                    : `<tr><td colspan="3" class="muted">Нет данных по дням</td></tr>`;
+                    : `<tr><td colspan="3" class="muted">Немає даних</td></tr>`;
 
                 chartError.hidden = true;
                 chartError.textContent = '';
             } catch (e) {
-                const msg = (e && e.message) ? e.message : String(e);
                 chartError.hidden = false;
-                chartError.textContent = msg;
+                chartError.textContent = (e && e.message) ? e.message : String(e);
             }
         }
 
-        // Запускаем загрузку (предохранитель на случай hot reload)
-        if (!window.__loadedWeatherOnce) {
-            window.__loadedWeatherOnce = true;
-            loadForecast();
-        }
+        
+        document.getElementById('btnAdd').addEventListener('click', async () => {
+            const timeStr = document.getElementById('fTime').value;   // "YYYY-MM-DDTHH:mm"
+            const temp = parseFloat(document.getElementById('fTemp').value);
+            const prob = parseInt(document.getElementById('fProb').value || '0', 10);
+            const msg = document.getElementById('adminMsg');
+
+            if (!timeStr || Number.isNaN(temp)) {
+                msg.textContent = 'Вкажи час і температуру.';
+                return;
+            }
+
+            
+            const iso = new Date(timeStr).toISOString();
+
+            const res = await fetch('/api/samples', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ time: iso, temperatureC: temp, precipProb: prob })
+            });
+
+            msg.textContent = res.ok ? 'Запис додано.' : 'Помилка: ' + res.status;
+            if (res.ok) await loadFromDb();
+        });
+
+        document.getElementById('btnReload').addEventListener('click', loadFromDb);
+
+        document.getElementById('btnClear').addEventListener('click', async () => {
+            if (!confirm('Точно очистити всю БД?')) return;
+            const res = await fetch('/api/samples', { method: 'DELETE' });
+            document.getElementById('adminMsg').textContent = res.ok ? 'БД очищено.' : 'Помилка: ' + res.status;
+            if (res.ok) await loadFromDb();
+        });
+
+       
+        loadFromDb();
+        window.addEventListener('resize', () => chart && chart.resize());
     </script>
 </body>
 </html>
