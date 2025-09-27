@@ -5,6 +5,14 @@
 Фронтенд читає **лише** з цієї «БД».  
 Для доступу ззовні використовується **ngrok**, який створює публічний HTTPS-URL до локального сервера.
 
+
+## Перенесення на справжню базу даних (SQLite або іншу)
+// було:
+builder.Services.AddDbContext<AppDb>(o => o.UseInMemoryDatabase("weatherdb"));
+
+// стало:
+builder.Services.AddDbContext<AppDb>(o => o.UseSqlite("Data Source=weather.db"));
+
 ---
 
 ## Стек технологій
